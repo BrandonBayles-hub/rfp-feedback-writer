@@ -48,13 +48,21 @@ async function writePointer(url, expires, sha) {
 
 async function answers(url) {
   try {
-    const response = await fetch(url, { headers: { "x-rfp-feedback": gate, "user-agent": "rfp-feedback-relay" } });
+    const response = await fetch(url, { headers: { "x-rfp-feedback": gate, "user-agent": "rfp-feedback-relay" }, signal: AbortSignal.timeout(20000) });
     if (!response.ok) return false;
     const body = await response.json();
     return Array.isArray(body);
   } catch {
     return false;
   }
+}
+
+async function answersSoon(url) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (await answers(url)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  }
+  return false;
 }
 
 async function cloudflaredPath() {
@@ -111,25 +119,39 @@ async function main() {
   }
   const port = 8787;
   const server = await startRelay(port, token, gate);
-  const tunnel = await openTunnel(port);
+  const firstTunnel = await openTunnel(port);
   let healthy = false;
   for (let attempt = 0; attempt < 10; attempt += 1) {
-    if (await answers(tunnel.url)) {
+    if (await answers(firstTunnel.url)) {
       healthy = true;
       break;
     }
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
   if (!healthy) throw new Error("relay did not answer");
-  const pointer = await readPointer();
-  const expires = new Date(Date.now() + HOLD_MS + HANDOFF_MS).toISOString();
-  await writePointer(tunnel.url, expires, pointer.sha);
-  log("relay published");
   const stopAt = Date.now() + HOLD_MS;
+  const publish = async (url) => {
+    const pointer = await readPointer();
+    await writePointer(url, new Date(stopAt + HANDOFF_MS).toISOString(), pointer.sha);
+  };
+  let tunnel = firstTunnel;
+  await publish(tunnel.url);
+  log("relay published");
+  let misses = 0;
   while (Date.now() < stopAt) {
-    await new Promise((resolve) => setTimeout(resolve, Math.min(10 * 60 * 1000, stopAt - Date.now())));
-    if (!(await answers(tunnel.url))) throw new Error("relay stopped answering");
-    log("relay healthy");
+    await new Promise((resolve) => setTimeout(resolve, Math.min(2 * 60 * 1000, stopAt - Date.now())));
+    if (await answers(tunnel.url)) {
+      misses = 0;
+      continue;
+    }
+    misses += 1;
+    if (misses < 2) continue;
+    tunnel.child.kill("SIGTERM");
+    tunnel = await openTunnel(port);
+    if (!(await answersSoon(tunnel.url))) throw new Error("relay stopped answering");
+    await publish(tunnel.url);
+    misses = 0;
+    log("relay replaced");
   }
   await github("/repos/BrandonBayles-hub/rfp-feedback-writer/actions/workflows/relay.yml/dispatches", {
     method: "POST",
@@ -140,6 +162,7 @@ async function main() {
     const next = await readPointer().catch(() => null);
     if (next?.url && next.url !== tunnel.url && await answers(next.url)) {
       log("handed off");
+      await new Promise((resolve) => setTimeout(resolve, 15 * 60 * 1000));
       server.close();
       tunnel.child.kill("SIGTERM");
       return;
