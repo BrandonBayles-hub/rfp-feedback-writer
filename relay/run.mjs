@@ -57,6 +57,22 @@ async function answers(url) {
   }
 }
 
+async function keepScheduleAlive() {
+  const file = "/repos/BrandonBayles-hub/rfp-feedback-writer/contents/heartbeat.txt";
+  const current = await github(file).catch(() => null);
+  const last = current ? Date.parse(Buffer.from(current.content || "", "base64").toString("utf8").trim()) : 0;
+  if (Date.now() - last < 7 * 24 * 60 * 60 * 1000) return;
+  await github(file, {
+    method: "PUT",
+    body: JSON.stringify({
+      message: "chore: keep the relay schedule active",
+      content: Buffer.from(`${new Date().toISOString()}\n`).toString("base64"),
+      ...(current?.sha ? { sha: current.sha } : {}),
+      branch: "main",
+    }),
+  });
+}
+
 async function answersSoon(url) {
   for (let attempt = 0; attempt < 10; attempt += 1) {
     if (await answers(url)) return true;
@@ -114,8 +130,12 @@ async function main() {
   const current = await readPointer().catch(() => null);
   const expiresAt = current?.expires ? Date.parse(current.expires) : 0;
   if (current?.kind === "relay" && current.url && expiresAt > Date.now() + 25 * 60 * 1000 && await answers(current.url)) {
-    log("relay already up");
-    return;
+    await new Promise((resolve) => setTimeout(resolve, 45000));
+    if (await answers(current.url)) {
+      await keepScheduleAlive().catch(() => log("heartbeat failed"));
+      log("relay already up");
+      return;
+    }
   }
   const port = 8787;
   const server = await startRelay(port, token, gate);
@@ -137,6 +157,7 @@ async function main() {
   let tunnel = firstTunnel;
   await publish(tunnel.url);
   log("relay published");
+  await keepScheduleAlive().catch(() => log("heartbeat failed"));
   let misses = 0;
   while (Date.now() < stopAt) {
     await new Promise((resolve) => setTimeout(resolve, Math.min(2 * 60 * 1000, stopAt - Date.now())));
