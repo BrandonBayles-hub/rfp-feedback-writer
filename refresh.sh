@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-GATE="rfp-feedback-9c3e1a7b"
+GATE="${FEEDBACK_GATE:?}"
 REPO="entrata/product-prototypes"
 FILE="implementation-prototype/fortiva-residential/feedback-api.json"
 

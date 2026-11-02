@@ -3,4 +3,4 @@ main = "worker.js"
 compatibility_date = "2026-10-29"
 
 [vars]
-GATE = "rfp-feedback-9c3e1a7b"
+GATE = ""

@@ -1,0 +1,24 @@
+name: Keep feedback relay up
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: relay
+        env:
+          FEEDBACK_TOKEN: ${{ secrets.FEEDBACK_GITHUB_TOKEN }}
+          FEEDBACK_GATE: ${{ secrets.FEEDBACK_GATE }}
+        run: node relay/run.mjs
