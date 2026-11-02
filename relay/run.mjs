@@ -105,7 +105,7 @@ async function main() {
   if (!token || !gate) throw new Error("missing relay credentials");
   const current = await readPointer().catch(() => null);
   const expiresAt = current?.expires ? Date.parse(current.expires) : 0;
-  if (current?.kind === "relay" && current.url && expiresAt > Date.now() + 90 * 60 * 1000 && await answers(current.url)) {
+  if (current?.kind === "relay" && current.url && expiresAt > Date.now() + 25 * 60 * 1000 && await answers(current.url)) {
     log("relay already up");
     return;
   }
