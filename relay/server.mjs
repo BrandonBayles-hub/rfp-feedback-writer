@@ -44,14 +44,11 @@ async function readFile(token) {
   if (response.status === 404) return { entries: [], sha: undefined };
   if (!response.ok) throw new Error("read failed");
   const payload = await response.json();
-  let entries = [];
-  try {
-    const parsed = JSON.parse(Buffer.from(payload.content || "", "base64").toString("utf8"));
-    if (Array.isArray(parsed)) entries = parsed.map(clean).filter(Boolean);
-  } catch {
-    entries = [];
-  }
-  return { entries, sha: payload.sha };
+  const raw = await github(token, `/repos/${REPO}/git/blobs/${payload.sha}`, { headers: { accept: "application/vnd.github.raw" } });
+  if (!raw.ok) throw new Error("read failed");
+  const parsed = JSON.parse(await raw.text());
+  if (!Array.isArray(parsed)) throw new Error("read failed");
+  return { entries: parsed.map(clean).filter(Boolean), sha: payload.sha };
 }
 
 async function writeFile(token, entries, sha) {
@@ -70,11 +67,20 @@ async function writeFile(token, entries, sha) {
 }
 
 function sameNote(a, b) {
-  return a.scope === b.scope && (a.topic || "") === (b.topic || "") && a.text === b.text;
+  return a.scope === b.scope && a.name === b.name && (a.topic || "") === (b.topic || "") && a.text === b.text;
 }
 
-async function update(token, change) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+let queue = Promise.resolve();
+
+function update(token, change) {
+  const run = queue.then(() => applyChange(token, change));
+  queue = run.catch(() => {});
+  return run;
+}
+
+async function applyChange(token, change) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    if (attempt) await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
     const current = await readFile(token);
     const byId = new Map(current.entries.map((entry) => [entry.id, entry]));
     if (change.op === "add") {
@@ -83,7 +89,7 @@ async function update(token, change) {
       byId.set(change.entry.id, change.entry);
     }
     if (change.op === "delete") byId.delete(change.id);
-    const next = [...byId.values()].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200);
+    const next = [...byId.values()].sort((a, b) => b.at.localeCompare(a.at));
     if (await writeFile(token, next, current.sha)) return next;
   }
   throw new Error("write failed");
